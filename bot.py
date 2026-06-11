@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 REPLY_KEYBOARD = lambda uid: InlineKeyboardMarkup(
-    [[InlineKeyboardButton("↩️ پاسخ", callback_data=f"reply_{uid}")]]
+    [[InlineKeyboardButton("Reply", callback_data=f"reply_{uid}")]]
 )
 
 def is_owner(user):
@@ -35,6 +35,185 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bot_username = (await context.bot.get_me()).username
 
     if is_owner(user):
+        await update.message.reply_text(
+            "Bot is ready!\n"
+            f"Share link: https://t.me/{bot_username}",
+        )
+        return
+
+    await update.message.reply_text(
+        "Anonymous Message Bot\n\n"
+        "Send your anonymous message now.\n"
+        "Text, photo, video, file, audio, gif, sticker - all accepted!"
+    )
+    context.user_data["waiting_for_message"] = True
+
+
+async def receive_any(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    msg = update.message
+
+    if is_owner(user):
+        if context.user_data.get("is_owner_replying"):
+            await owner_reply_media(update, context)
+        return
+
+    if not context.user_data.get("waiting_for_message"):
+        await msg.reply_text("Please send /start first.")
+        return
+
+    if not OWNER_CHAT_ID:
+        await msg.reply_text("Bot not configured.")
+        return
+
+    uid = user.id
+    caption_prefix = "New anonymous message:\n\n"
+
+    try:
+        if msg.text:
+            await context.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=caption_prefix + msg.text,
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+        elif msg.photo:
+            await context.bot.send_photo(
+                chat_id=OWNER_CHAT_ID,
+                photo=msg.photo[-1].file_id,
+                caption=caption_prefix + (msg.caption or ""),
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+        elif msg.video:
+            await context.bot.send_video(
+                chat_id=OWNER_CHAT_ID,
+                video=msg.video.file_id,
+                caption=caption_prefix + (msg.caption or ""),
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+        elif msg.audio:
+            await context.bot.send_audio(
+                chat_id=OWNER_CHAT_ID,
+                audio=msg.audio.file_id,
+                caption=caption_prefix + (msg.caption or ""),
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+        elif msg.voice:
+            await context.bot.send_voice(
+                chat_id=OWNER_CHAT_ID,
+                voice=msg.voice.file_id,
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+        elif msg.animation:
+            await context.bot.send_animation(
+                chat_id=OWNER_CHAT_ID,
+                animation=msg.animation.file_id,
+                caption=caption_prefix + (msg.caption or ""),
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+        elif msg.sticker:
+            await context.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=caption_prefix + "[Sticker]",
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+            await context.bot.send_sticker(
+                chat_id=OWNER_CHAT_ID,
+                sticker=msg.sticker.file_id,
+            )
+        elif msg.document:
+            await context.bot.send_document(
+                chat_id=OWNER_CHAT_ID,
+                document=msg.document.file_id,
+                caption=caption_prefix + (msg.caption or ""),
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+        elif msg.video_note:
+            await context.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=caption_prefix + "[Video Note]",
+                reply_markup=REPLY_KEYBOARD(uid),
+            )
+            await context.bot.send_video_note(
+                chat_id=OWNER_CHAT_ID,
+                video_note=msg.video_note.file_id,
+            )
+        else:
+            await msg.reply_text("This content type is not supported.")
+            return
+
+        context.user_data["waiting_for_message"] = False
+        await msg.reply_text("Sent successfully! Send /start to send another message.")
+
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await msg.reply_text("Error sending. Try again.")
+
+
+async def reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    sender_id = int(query.data.split("_")[1])
+    context.user_data["replying_to"] = sender_id
+    context.user_data["is_owner_replying"] = True
+
+    await query.message.reply_text("Write your reply:")
+
+
+async def owner_reply_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    sender_id = context.user_data.get("replying_to")
+    if not sender_id:
+        return
+
+    msg = update.message
+
+    try:
+        if msg.text:
+            await context.bot.send_message(chat_id=sender_id, text="Reply: " + msg.text)
+        elif msg.photo:
+            await context.bot.send_photo(chat_id=sender_id, photo=msg.photo[-1].file_id, caption=msg.caption or "")
+        elif msg.video:
+            await context.bot.send_video(chat_id=sender_id, video=msg.video.file_id, caption=msg.caption or "")
+        elif msg.audio:
+            await context.bot.send_audio(chat_id=sender_id, audio=msg.audio.file_id, caption=msg.caption or "")
+        elif msg.voice:
+            await context.bot.send_voice(chat_id=sender_id, voice=msg.voice.file_id)
+        elif msg.animation:
+            await context.bot.send_animation(chat_id=sender_id, animation=msg.animation.file_id)
+        elif msg.sticker:
+            await context.bot.send_sticker(chat_id=sender_id, sticker=msg.sticker.file_id)
+        elif msg.document:
+            await context.bot.send_document(chat_id=sender_id, document=msg.document.file_id, caption=msg.caption or "")
+        elif msg.video_note:
+            await context.bot.send_video_note(chat_id=sender_id, video_note=msg.video_note.file_id)
+
+        context.user_data["is_owner_replying"] = False
+        await msg.reply_text("Reply sent!")
+
+    except Exception as e:
+        await msg.reply_text(f"Error: {e}")
+
+
+def main() -> None:
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(reply_callback, pattern="^reply_"))
+
+    all_media = (
+        filters.TEXT | filters.PHOTO | filters.VIDEO | filters.AUDIO |
+        filters.VOICE | filters.ANIMATION | filters.Sticker.ALL |
+        filters.Document.ALL | filters.VIDEO_NOTE
+    )
+
+    app.add_handler(MessageHandler(all_media & ~filters.COMMAND, receive_any))
+
+    logger.info("Bot started...")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()    if is_owner(user):
         await update.message.reply_text(
             "👋 سلام! این ربات ناشناس توست.\n"
             f"🔗 لینک اشتراک‌گذاری:\n`https://t.me/{bot_username}`\n\n"
